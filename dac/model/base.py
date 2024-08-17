@@ -193,25 +193,27 @@ class CodecMixin:
         else:
             # Chunked inference
             self.padding = False
-            # Zero-pad signal on either side by the delay
-            audio_signal.zero_pad(self.delay, self.delay)
-            n_samples = int(win_duration * self.sample_rate)
-            # Round n_samples to nearest hop length multiple
-            n_samples = int(math.ceil(n_samples / self.hop_length) * self.hop_length)
-            hop = self.get_output_length(n_samples)
+            hop = int(win_duration * self.sample_rate)
+            # Round hop to nearest hop length multiple
+            hop = int(math.ceil(hop / self.hop_length) * self.hop_length)
 
+        # Zero-pad signal on either side by the delay
+        audio_signal.zero_pad(self.delay, self.delay)
         codes = []
         range_fn = range if not verbose else tqdm.trange
+        n_samples = self.delay + hop + self.delay
+        chunk_length = hop // self.hop_length
 
         for i in range_fn(0, nt, hop):
             x = audio_signal[..., i : i + n_samples]
             x = x.zero_pad(0, max(0, n_samples - x.shape[-1]))
 
             audio_data = x.audio_data.to(self.device)
-            audio_data = self.preprocess(audio_data, self.sample_rate)
             _, c, _, _, _ = self.encode(audio_data, n_quantizers)
+            assert (c.shape[-1] - chunk_length) % 2 == 0
+            pad = (c.shape[-1] - chunk_length) // 2
+            c = c[..., pad:-pad]
             codes.append(c.to(original_device))
-            chunk_length = c.shape[-1]
 
         codes = torch.cat(codes, dim=-1)
 
