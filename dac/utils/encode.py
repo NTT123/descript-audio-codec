@@ -1,3 +1,4 @@
+import os
 import math
 import warnings
 from pathlib import Path
@@ -8,8 +9,20 @@ import torch
 from audiotools import AudioSignal
 from audiotools.core import util
 from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
 
 from dac.utils import load_model
+
+class AudioDataset(Dataset):
+    def __init__(self, wav_dir):
+        self.wav_files = [os.path.join(wav_dir, f) for f in os.listdir(wav_dir) if f.endswith('.wav')]
+
+    def __len__(self):
+        return len(self.wav_files)
+
+    def __getitem__(self, idx):
+        return self.wav_files[idx], AudioSignal(self.wav_files[idx])
+
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -61,26 +74,27 @@ def encode(
     generator.eval()
     kwargs = {"n_quantizers": n_quantizers}
 
-    # Find all audio files in input path
-    input = Path(input)
-    audio_files = util.find_audio(input)
+    def collate_fn(batch):
+        return batch[0]
 
+    input = Path(input)
+    dataset = AudioDataset(input)
+    dataloader = DataLoader(dataset, batch_size=1, num_workers=8, shuffle=False, collate_fn=collate_fn)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
 
-    for i in tqdm(range(len(audio_files)), desc="Encoding files"):
-        # Load file
-        signal = AudioSignal(audio_files[i])
-
+    for file_path, signal in tqdm(dataloader, desc="Encoding files"):
+        signal = signal.to(device)
         # Encode audio to .dac format
         artifact = generator.compress(signal, win_duration, verbose=verbose, **kwargs)
 
         # Compute output path
-        relative_path = audio_files[i].relative_to(input)
+        file_path = Path(file_path)
+        relative_path = file_path.relative_to(input)
         output_dir = output / relative_path.parent
         if not relative_path.name:
             output_dir = output
-            relative_path = audio_files[i]
+            relative_path = file_path
         output_name = relative_path.with_suffix(".dac").name
         output_path = output_dir / output_name
         output_path.parent.mkdir(parents=True, exist_ok=True)
