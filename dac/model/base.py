@@ -192,16 +192,17 @@ class CodecMixin:
             hop = nt
         else:
             # Chunked inference
-            self.padding = False
+            self.padding = True
             hop = int(win_duration * self.sample_rate)
             # Round hop to nearest hop length multiple
             hop = int(math.ceil(hop / self.hop_length) * self.hop_length)
 
         # Zero-pad signal on either side by the delay
-        audio_signal.zero_pad(self.delay, self.delay)
+        delay = int(math.ceil(self.delay / self.hop_length) * self.hop_length)
+        audio_signal.zero_pad(delay, delay)
         codes = []
         range_fn = range if not verbose else tqdm.trange
-        n_samples = self.delay + hop + self.delay
+        n_samples = delay + hop + delay
         chunk_length = hop // self.hop_length
 
         for i in range_fn(0, nt, hop):
