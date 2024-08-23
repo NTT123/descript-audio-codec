@@ -187,33 +187,39 @@ class CodecMixin:
 
         if audio_signal.signal_duration <= win_duration:
             # Unchunked compression (used if signal length < win duration)
-            self.padding = True
+            self.padding = False
             n_samples = nt
             hop = nt
         else:
             # Chunked inference
-            self.padding = True
+            self.padding = False
             hop = int(win_duration * self.sample_rate)
             # Round hop to nearest hop length multiple
             hop = int(math.ceil(hop / self.hop_length) * self.hop_length)
 
+        x = torch.randn(1, 1, 2*self.get_delay(), device="cuda", requires_grad=True)
+        with torch.enable_grad():
+            z, _, _, _, _ = self.encode(x, n_quantizers)
+            z[..., z.shape[-1]//2].square().sum().backward()
+            window = (x.grad != 0).sum().item()
+
         # Zero-pad signal on either side by the delay
-        delay = int(math.ceil(self.delay / self.hop_length) * self.hop_length)
-        audio_signal.zero_pad(delay, delay)
+        delay = window // 2
         codes = []
         range_fn = range if not verbose else tqdm.trange
         n_samples = delay + hop + delay
-        chunk_length = hop // self.hop_length
+        chunk_length = hop // self.hop_length + 1
+        hop = n_samples - window + self.hop_length
 
         for i in range_fn(0, nt, hop):
             x = audio_signal[..., i : i + n_samples]
-            x = x.zero_pad(0, max(0, n_samples - x.shape[-1]))
+            if n_samples > x.shape[-1]:
+                break
 
             audio_data = x.audio_data.to(self.device)
-            _, c, _, _, _ = self.encode(audio_data, n_quantizers)
-            assert (c.shape[-1] - chunk_length) % 2 == 0
-            pad = (c.shape[-1] - chunk_length) // 2
-            c = c[..., pad:-pad]
+            audio_data = audio_data.reshape(-1).contiguous().reshape(1,1, -1)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                _, c, _, _, _ = self.encode(audio_data, n_quantizers)
             codes.append(c.to(original_device))
 
         codes = torch.cat(codes, dim=-1)

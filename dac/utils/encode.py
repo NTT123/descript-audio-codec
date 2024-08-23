@@ -28,7 +28,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 
 @argbind.bind(group="encode", positional=True, without_prefix=True)
-@torch.inference_mode()
 @torch.no_grad()
 def encode(
     input: str,
